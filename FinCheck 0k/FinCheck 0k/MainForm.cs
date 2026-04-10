@@ -1,8 +1,10 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Net;
 using System.Net.Mail;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
@@ -52,6 +54,9 @@ namespace FinCheck_0k
             notifyIcon.Visible = false;
         }
 
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern bool DestroyIcon(IntPtr handle);
+
         private Icon CreateSimpleIcon()
         {
             Bitmap bitmap = new Bitmap(16, 16);
@@ -62,7 +67,14 @@ namespace FinCheck_0k
                 g.DrawEllipse(Pens.DarkOrange, 2, 2, 12, 12);
             }
             IntPtr hIcon = bitmap.GetHicon();
-            return Icon.FromHandle(hIcon);
+            try
+            {
+                return (Icon)Icon.FromHandle(hIcon).Clone();
+            }
+            finally
+            {
+                DestroyIcon(hIcon);
+            }
         }
 
         private void MainForm_Load(object sender, EventArgs e)
@@ -151,7 +163,7 @@ namespace FinCheck_0k
                 }
 
                 string[] allFiles = Directory.GetFiles(folderPath, "*", SearchOption.AllDirectories);
-                System.Collections.Generic.List<string> zeroFiles = new System.Collections.Generic.List<string>();
+                List<string> zeroFiles = new List<string>();
 
                 foreach (string file in allFiles)
                 {
@@ -188,7 +200,7 @@ namespace FinCheck_0k
             }
         }
 
-        private void SendAlert(System.Collections.Generic.List<string> zeroFiles)
+        private void SendAlert(List<string> zeroFiles)
         {
             if (string.IsNullOrEmpty(smtpServer) ||
                 string.IsNullOrEmpty(emailFrom) ||
