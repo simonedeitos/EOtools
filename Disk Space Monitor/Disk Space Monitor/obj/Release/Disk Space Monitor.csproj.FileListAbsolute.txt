@@ -1,0 +1,11 @@
+C:\Users\s.deitos\source\repos\Disk Space Monitor\Disk Space Monitor\bin\Release\Disk Space Monitor.exe.config
+C:\Users\s.deitos\source\repos\Disk Space Monitor\Disk Space Monitor\bin\Release\Disk Space Monitor.exe
+C:\Users\s.deitos\source\repos\Disk Space Monitor\Disk Space Monitor\bin\Release\Disk Space Monitor.pdb
+C:\Users\s.deitos\source\repos\Disk Space Monitor\Disk Space Monitor\obj\Release\Disk Space Monitor.csproj.AssemblyReference.cache
+C:\Users\s.deitos\source\repos\Disk Space Monitor\Disk Space Monitor\obj\Release\DiskSpaceMonitor.MainForm.resources
+C:\Users\s.deitos\source\repos\Disk Space Monitor\Disk Space Monitor\obj\Release\Disk_Space_Monitor.Properties.Resources.resources
+C:\Users\s.deitos\source\repos\Disk Space Monitor\Disk Space Monitor\obj\Release\DiskSpaceMonitor.SettingsForm.resources
+C:\Users\s.deitos\source\repos\Disk Space Monitor\Disk Space Monitor\obj\Release\Disk Space Monitor.csproj.GenerateResource.cache
+C:\Users\s.deitos\source\repos\Disk Space Monitor\Disk Space Monitor\obj\Release\Disk Space Monitor.csproj.CoreCompileInputs.cache
+C:\Users\s.deitos\source\repos\Disk Space Monitor\Disk Space Monitor\obj\Release\Disk Space Monitor.exe
+C:\Users\s.deitos\source\repos\Disk Space Monitor\Disk Space Monitor\obj\Release\Disk Space Monitor.pdb
