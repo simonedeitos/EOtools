@@ -5,6 +5,7 @@ using System.Drawing;
 using System.IO;
 using System.Net;
 using System.Net.Mail;
+using System.Security.Cryptography;
 using System.Text;
 using System.Windows.Forms;
 using System.Xml;
@@ -220,7 +221,7 @@ namespace DumpCheck
                 smtpPort = Convert.ToInt32(key.GetValue("SmtpPort", 25));
                 smtpUseSsl = Convert.ToBoolean(key.GetValue("SmtpUseSsl", false));
                 smtpUsername = key.GetValue("SmtpUsername", "").ToString();
-                smtpPassword = key.GetValue("SmtpPassword", "").ToString();
+                smtpPassword = DecryptStringFromRegistry(key.GetValue("SmtpPassword", "").ToString());
                 emailFrom = key.GetValue("EmailFrom", "").ToString();
                 emailTo = key.GetValue("EmailTo", "").ToString();
                 emailSubject = key.GetValue("EmailSubject", "DumpCheck Alert").ToString();
@@ -635,6 +636,25 @@ namespace DumpCheck
         private string FormatSizeOrMissing(bool exists, long? sizeBytes)
         {
             return exists && sizeBytes.HasValue ? sizeBytes.Value + " bytes (" + FormatBytes(sizeBytes.Value) + ")" : "MISSING";
+        }
+
+        private static string DecryptStringFromRegistry(string input)
+        {
+            if (string.IsNullOrEmpty(input))
+            {
+                return string.Empty;
+            }
+
+            try
+            {
+                byte[] raw = Convert.FromBase64String(input);
+                byte[] unprotected = ProtectedData.Unprotect(raw, null, DataProtectionScope.CurrentUser);
+                return Encoding.UTF8.GetString(unprotected);
+            }
+            catch
+            {
+                return input;
+            }
         }
 
         private void UpdateCountdownLabel(bool realtime)

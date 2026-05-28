@@ -3,6 +3,8 @@ using System.Drawing;
 using System.IO;
 using System.Net;
 using System.Net.Mail;
+using System.Security.Cryptography;
+using System.Text;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
@@ -191,7 +193,7 @@ namespace DumpCheck
                 numSmtpPort.Value = Convert.ToDecimal(key.GetValue("SmtpPort", 25));
                 chkUseSsl.Checked = Convert.ToBoolean(key.GetValue("SmtpUseSsl", false));
                 txtSmtpUsername.Text = key.GetValue("SmtpUsername", "").ToString();
-                txtSmtpPassword.Text = key.GetValue("SmtpPassword", "").ToString();
+                txtSmtpPassword.Text = DecryptStringFromRegistry(key.GetValue("SmtpPassword", "").ToString());
                 txtEmailFrom.Text = key.GetValue("EmailFrom", "").ToString();
                 txtEmailTo.Text = key.GetValue("EmailTo", "").ToString();
                 txtEmailSubject.Text = key.GetValue("EmailSubject", "DumpCheck Alert").ToString();
@@ -221,7 +223,7 @@ namespace DumpCheck
                 key.SetValue("SmtpPort", (int)numSmtpPort.Value);
                 key.SetValue("SmtpUseSsl", chkUseSsl.Checked);
                 key.SetValue("SmtpUsername", txtSmtpUsername.Text.Trim());
-                key.SetValue("SmtpPassword", txtSmtpPassword.Text);
+                key.SetValue("SmtpPassword", EncryptStringForRegistry(txtSmtpPassword.Text));
                 key.SetValue("EmailFrom", txtEmailFrom.Text.Trim());
                 key.SetValue("EmailTo", txtEmailTo.Text.Trim());
                 key.SetValue("EmailSubject", txtEmailSubject.Text.Trim());
@@ -303,6 +305,36 @@ namespace DumpCheck
                 if (dialog.ShowDialog() == DialogResult.OK)
                 {
                     target.Text = dialog.SelectedPath;
+                }
+
+                private static string EncryptStringForRegistry(string input)
+                {
+                    if (string.IsNullOrEmpty(input))
+                    {
+                        return string.Empty;
+                    }
+
+                    byte[] protectedBytes = ProtectedData.Protect(Encoding.UTF8.GetBytes(input), null, DataProtectionScope.CurrentUser);
+                    return Convert.ToBase64String(protectedBytes);
+                }
+
+                private static string DecryptStringFromRegistry(string input)
+                {
+                    if (string.IsNullOrEmpty(input))
+                    {
+                        return string.Empty;
+                    }
+
+                    try
+                    {
+                        byte[] raw = Convert.FromBase64String(input);
+                        byte[] unprotected = ProtectedData.Unprotect(raw, null, DataProtectionScope.CurrentUser);
+                        return Encoding.UTF8.GetString(unprotected);
+                    }
+                    catch
+                    {
+                        return input;
+                    }
                 }
             }
         }
