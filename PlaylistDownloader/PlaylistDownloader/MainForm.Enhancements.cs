@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Drawing;
@@ -102,12 +102,21 @@ namespace PlaylistDownloader
             grid.AllowUserToResizeColumns = true;
             foreach (DataGridViewColumn col in grid.Columns)
             {
-                col.AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
                 col.Resizable = DataGridViewTriState.True;
                 int w;
                 if (widths.TryGetValue(col.Name, out w))
-                    col.Width = w;
+                {
+                    // Fill mode keeps all columns inside the grid; resizing one redistributes space with the next
+                    col.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+                    col.FillWeight = w;
+                    col.MinimumWidth = 30;
+                }
+                else
+                {
+                    col.AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
+                }
             }
+            grid.ScrollBars = ScrollBars.Vertical;
         }
 
         private static bool IsDeezerId(string id)

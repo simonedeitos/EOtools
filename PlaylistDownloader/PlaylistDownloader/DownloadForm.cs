@@ -519,6 +519,7 @@ namespace PlaylistDownloader
                 AllowUserToDeleteRows = false,
                 RowHeadersVisible = false,
                 AllowUserToResizeColumns = true,
+                ScrollBars = ScrollBars.Vertical,
                 SelectionMode = DataGridViewSelectionMode.FullRowSelect,
                 BackgroundColor = SystemColors.Window
             };
@@ -540,7 +541,9 @@ namespace PlaylistDownloader
                     DataPropertyName = name,
                     HeaderText = name,
                     Name = name,
-                    Width = widths[i],
+                    AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
+                    FillWeight = widths[i],
+                    MinimumWidth = 30,
                     SortMode = DataGridViewColumnSortMode.Automatic,
                     Resizable = DataGridViewTriState.True
                 });
