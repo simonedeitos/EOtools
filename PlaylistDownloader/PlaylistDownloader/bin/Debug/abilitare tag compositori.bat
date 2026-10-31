@@ -1,0 +1,14 @@
+@echo off
+REM Aggiorna deemix all'ultima versione
+pip install -U deemix
+
+REM Trova e modifica il file di configurazione di deemix
+python -c "import json, os, sys; config_path = os.path.join(os.path.expanduser('~'), 'AppData', 'Roaming', 'deemix', 'config.json'); print(f'Trovato file di configurazione: {config_path}'); config = json.load(open(config_path, 'r', encoding='utf-8')) if os.path.exists(config_path) else {}; config.setdefault('tags', {}); config['tags']['title'] = True; config['tags']['artist'] = True; config['tags']['album'] = True; config['tags']['cover'] = True; config['tags']['trackNumber'] = True; config['tags']['trackTotal'] = True; config['tags']['discNumber'] = True; config['tags']['discTotal'] = True; config['tags']['albumArtist'] = True; config['tags']['genre'] = True; config['tags']['year'] = True; config['tags']['date'] = True; config['tags']['explicit'] = True; config['tags']['isrc'] = True; config['tags']['length'] = True; config['tags']['barcode'] = True; config['tags']['bpm'] = True; config['tags']['replayGain'] = True; config['tags']['label'] = True; config['tags']['lyrics'] = True; config['tags']['syncedLyrics'] = True; config['tags']['copyright'] = True; config['tags']['composer'] = True; config['tags']['involvedPeople'] = True; config['tags']['source'] = True; config['tags']['savePlaylistAsCompilation'] = False; config['tags']['multiArtistSeparator'] = ', '; config['tags']['multiArtistSplit'] = True; config['tags']['singleAlbumArtist'] = False; config['tags']['albumVariousArtists'] = True; config['tags']['saveID3v1'] = True; config['tags']['saveID3v23'] = True; config['tags']['padTracks'] = True; config['tags']['saveArtwork'] = True; config['tags']['saveComposer'] = True; config['tags']['saveAuthor'] = True; config['tags']['saveArrangers'] = True; config['tags']['saveProducers'] = True; config['tags']['saveWriters'] = True; config['tags']['saveEngineers'] = True; config['tags']['saveRemixer'] = True; config['tags']['embedAlbumArt'] = True; config['tags']['id3v2_separator'] = '; '; json.dump(config, open(config_path, 'w', encoding='utf-8'), indent=2); print('deemix configurato per scaricare TUTTI i tag disponibili')"
+
+REM Verifica la configurazione
+python -c "import json, os; config_path = os.path.join(os.path.expanduser('~'), 'AppData', 'Roaming', 'deemix', 'config.json'); config = json.load(open(config_path, 'r', encoding='utf-8')); print('Stato tag compositori:', config['tags'].get('saveComposer', False)); print('Stato tag autori:', config['tags'].get('saveAuthor', False)); print('Stato tag arrangers:', config['tags'].get('saveArrangers', False)); print('Stato tag writers:', config['tags'].get('saveWriters', False))"
+
+echo.
+echo Configurazione completata! Tutti i tag sono stati abilitati.
+echo.
+pause
