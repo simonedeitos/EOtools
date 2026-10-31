@@ -128,13 +128,13 @@ namespace PlaylistDownloader
                 if (Clipboard.ContainsText())
                     txtLinks.Text = Clipboard.GetText();
             });
-            var ok = DialogHelper.AddButton(bottom, "Conferma e importa", 326, 9, 114, (s, e) => Import());
+            var ok = DialogHelper.AddButton(bottom, "Conferma", 326, 9, 114, (s, e) => Import());
             ok.Font = new Font(ok.Font, FontStyle.Bold);
             var cancel = DialogHelper.AddButton(bottom, "Annulla", 450, 9, 90, null);
             cancel.DialogResult = DialogResult.Cancel;
             bottom.Controls.Add(chkClear);
             foreach (var b in new[] { paste, ok, cancel })
-                b.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+                b.Anchor = AnchorStyles.Top | AnchorStyles.Left;
 
             Controls.Add(txtLinks);
             Controls.Add(bottom);
