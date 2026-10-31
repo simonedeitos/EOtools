@@ -38,6 +38,14 @@ namespace PlaylistDownloader
             mnuArl.Click += mnuArl_Click;
             menuStrip.Items.Add(mnuImport);
             menuStrip.Items.Add(mnuArl);
+            var mnuOps = new ToolStripMenuItem("Operazioni");
+            var mnuRelease = new ToolStripMenuItem("Ricerca Brani per Release Date...");
+            mnuRelease.Click += mnuReleaseSearch_Click;
+            var mnuReleaseCsv = new ToolStripMenuItem("Importa CSV release date...");
+            mnuReleaseCsv.Click += btnImportReleaseCsv_Click;
+            mnuOps.DropDownItems.Add(mnuRelease);
+            mnuOps.DropDownItems.Add(mnuReleaseCsv);
+            menuStrip.Items.Add(mnuOps);
             menuStrip.Dock = DockStyle.Top;
 
             Controls.Add(menuStrip);
@@ -75,9 +83,14 @@ namespace PlaylistDownloader
             panel1.Controls.Remove(btnImportCSV);
             panel1.Controls.Remove(btnImportISRC);
 
-            foreach (Button b in new[] { btnImportCSV, btnImportISRC, btnPasteLinks })
+            btnImportReleaseCsv = new Button();
+            btnImportReleaseCsv.Text = "Importa CSV release date";
+            btnImportReleaseCsv.UseVisualStyleBackColor = true;
+            btnImportReleaseCsv.Click += btnImportReleaseCsv_Click;
+
+            foreach (Button b in new[] { btnImportCSV, btnImportISRC, btnPasteLinks, btnImportReleaseCsv })
             {
-                b.Size = new Size(150, 27);
+                b.Size = new Size(b == btnImportReleaseCsv ? 170 : 150, 27);
                 b.Margin = new Padding(3, 3, 8, 3);
                 pnlImport.Controls.Add(b);
             }
