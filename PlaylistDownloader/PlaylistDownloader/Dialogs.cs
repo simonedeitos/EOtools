@@ -123,12 +123,13 @@ namespace PlaylistDownloader
 
             var bottom = new Panel { Dock = DockStyle.Bottom, Height = 44 };
             chkClear = new CheckBox { Text = "Svuota i risultati esistenti", Location = new Point(10, 12), Size = new Size(180, 22) };
-            var paste = DialogHelper.AddButton(bottom, "Incolla dagli appunti", 200, 9, 140, (s, e) =>
+            var paste = DialogHelper.AddButton(bottom, "Incolla dagli appunti", 190, 9, 130, (s, e) =>
             {
                 if (Clipboard.ContainsText())
                     txtLinks.Text = Clipboard.GetText();
             });
-            var ok = DialogHelper.AddButton(bottom, "Importa", 350, 9, 90, (s, e) => Import());
+            var ok = DialogHelper.AddButton(bottom, "Conferma e importa", 326, 9, 114, (s, e) => Import());
+            ok.Font = new Font(ok.Font, FontStyle.Bold);
             var cancel = DialogHelper.AddButton(bottom, "Annulla", 450, 9, 90, null);
             cancel.DialogResult = DialogResult.Cancel;
             bottom.Controls.Add(chkClear);
@@ -164,6 +165,11 @@ namespace PlaylistDownloader
                 MessageBox.Show("Nessun link di brano Deezer valido trovato.", "Incolla link", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
+
+            if (MessageBox.Show(this,
+                    $"Trovati {ids.Count} link di brani validi (righe non valide: {invalid}).\n\nConfermi l'importazione?",
+                    "Conferma importazione", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+                return;
 
             TrackIds = ids;
             InvalidLines = invalid;
