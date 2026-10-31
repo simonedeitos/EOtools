@@ -303,9 +303,9 @@ namespace PlaylistDownloader
             rbMonths = new RadioButton { Text = "Più mesi", Location = new Point(145, 22), Size = new Size(110, 22) };
             rbRange = new RadioButton { Text = "Intervallo di date (da - a)", Location = new Point(265, 22), Size = new Size(200, 22) };
             DialogHelper.AddLabel(gbPeriod, "Da:", 15, 62, 28);
-            dtFrom = new DateTimePicker { Location = new Point(45, 58), Size = new Size(110, 22), Value = DateTime.Today };
+            dtFrom = new DateTimePicker { Location = new Point(45, 58), Size = new Size(110, 22), Value = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1) };
             lblTo = DialogHelper.AddLabel(gbPeriod, "A:", 175, 62, 24);
-            dtTo = new DateTimePicker { Location = new Point(203, 58), Size = new Size(110, 22), Value = DateTime.Today };
+            dtTo = new DateTimePicker { Location = new Point(203, 58), Size = new Size(110, 22), Value = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1) };
             lblPeriod = new Label { Location = new Point(335, 62), Size = new Size(395, 20), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             gbPeriod.Controls.AddRange(new Control[] { rbMonth, rbMonths, rbRange, dtFrom, dtTo, lblPeriod });
             rbMonth.CheckedChanged += ModeChanged;
@@ -356,6 +356,12 @@ namespace PlaylistDownloader
         {
             bool single = rbMonth.Checked;
             bool month = !rbRange.Checked;
+            // With the day left at 29-31 the month spinner crashes on shorter months, so month modes keep day 1
+            if (month)
+            {
+                dtFrom.Value = new DateTime(dtFrom.Value.Year, dtFrom.Value.Month, 1);
+                dtTo.Value = new DateTime(dtTo.Value.Year, dtTo.Value.Month, 1);
+            }
             dtFrom.Format = dtTo.Format = DateTimePickerFormat.Custom;
             dtFrom.CustomFormat = dtTo.CustomFormat = month ? "MM/yyyy" : "dd/MM/yyyy";
             dtFrom.ShowUpDown = dtTo.ShowUpDown = month;
