@@ -119,7 +119,7 @@ namespace PlaylistDownloader
                 Padding = new Padding(8, 8, 8, 0)
             };
 
-            txtLinks = new TextBox { Multiline = true, ScrollBars = ScrollBars.Both, WordWrap = false, Dock = DockStyle.Fill, AcceptsReturn = true };
+            txtLinks = new TextBox { Multiline = true, ScrollBars = ScrollBars.Both, WordWrap = false, Dock = DockStyle.Fill, AcceptsReturn = true, MaxLength = int.MaxValue };
 
             var bottom = new Panel { Dock = DockStyle.Bottom, Height = 44 };
             chkClear = new CheckBox { Text = "Svuota i risultati esistenti", Location = new Point(10, 12), Size = new Size(180, 22) };
