@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -531,16 +531,21 @@ namespace PlaylistDownloader
             Controls.Add(split);
             Controls.Add(top);
 
-            foreach (DataGridViewColumn col in grid.Columns)
+            var widths = new[] { 50, 360, 90, 80, 330 };
+            for (int i = 0; i < table.Columns.Count; i++)
             {
-                col.AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
-                col.Resizable = DataGridViewTriState.True;
+                var name = table.Columns[i].ColumnName;
+                grid.Columns.Add(new DataGridViewTextBoxColumn
+                {
+                    DataPropertyName = name,
+                    HeaderText = name,
+                    Name = name,
+                    Width = widths[i],
+                    SortMode = DataGridViewColumnSortMode.Automatic,
+                    Resizable = DataGridViewTriState.True
+                });
             }
-            grid.Columns[0].Width = 50;
-            grid.Columns[1].Width = 360;
-            grid.Columns[2].Width = 90;
-            grid.Columns[3].Width = 80;
-            grid.Columns[4].Width = 330;
+            grid.DataSource = table;
 
             timer = new System.Windows.Forms.Timer { Interval = 300 };
             timer.Tick += (s, e) => RefreshUi();
