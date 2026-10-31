@@ -82,7 +82,7 @@ namespace PlaylistDownloader
         }
 
         // Returns null when the resource does not exist; quota errors are waited out, other failures throw after 5 attempts
-        public async Task<JObject> GetJsonAsync(string url, CancellationToken ct)
+        public async Task<JObject> GetJsonAsync(string url, CancellationToken ct, bool optional = false)
         {
             int failures = 0, quotaHits = 0;
             string lastError = "";
@@ -94,7 +94,11 @@ namespace PlaylistDownloader
                     using (var cts = CancellationTokenSource.CreateLinkedTokenSource(ct))
                     {
                         cts.CancelAfter(TimeSpan.FromSeconds(30));
-                        using (HttpResponseMessage response = await http.GetAsync(url, cts.Token).ConfigureAwait(false))
+                        using (var request = new HttpRequestMessage(HttpMethod.Get, url))
+                        {
+                            request.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) PlaylistDownloader");
+                            request.Headers.TryAddWithoutValidation("Accept", "application/json");
+                        using (HttpResponseMessage response = await http.SendAsync(request, cts.Token).ConfigureAwait(false))
                         {
                             int status = (int)response.StatusCode;
                             string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
@@ -114,9 +118,16 @@ namespace PlaylistDownloader
                                 if (quotaHits > 30) throw new IOException("Quota Deezer superata troppe volte di seguito. Riduci le richieste ogni 5s e riprova.");
                                 continue;
                             }
-                            if (status >= 500 || obj == null)
+                            if (optional && (status == 403 || status == 404))
+                            {
+                                if (Trace != null) Trace("Endpoint non disponibile (HTTP " + status + "): " + url);
+                                return null;
+                            }
+                            if (status >= 500 || status == 403 || obj == null)
                             {
                                 lastError = "HTTP " + status;
+                                if (status == 403 && Trace != null)
+                                    Trace("HTTP 403 su " + url + " - risposta: " + (body.Length > 150 ? body.Substring(0, 150) : body));
                                 failures++;
                                 if (Trace != null) Trace(lastError + " da Deezer, riprovo (tentativo " + failures + ")");
                                 limiter.PauseFor(2000 * failures);
@@ -124,6 +135,7 @@ namespace PlaylistDownloader
                             }
                             if (err != null) return null;
                             return obj;
+                        }
                         }
                     }
                 }
@@ -171,7 +183,7 @@ namespace PlaylistDownloader
             {
                 try
                 {
-                    JObject obj = await GetJsonAsync(url, ct).ConfigureAwait(false);
+                    JObject obj = await GetJsonAsync(url, ct, true).ConfigureAwait(false);
                     JArray data = obj == null ? null : obj["data"] as JArray;
                     if (data == null) continue;
                     foreach (JObject a in data.OfType<JObject>())
