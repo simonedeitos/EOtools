@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -68,6 +68,8 @@ namespace PlaylistDownloader
         private readonly HttpClient http;
         private readonly RateLimiter limiter;
 
+        public Action<string> Trace;
+
         public DeezerApiClient(HttpClient http, int maxPer5s)
         {
             this.http = http;
@@ -79,10 +81,12 @@ namespace PlaylistDownloader
             return DateTime.TryParseExact(s, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out date);
         }
 
-        // Returns null when the resource does not exist; throws after repeated transient failures
+        // Returns null when the resource does not exist; quota errors are waited out, other failures throw after 5 attempts
         public async Task<JObject> GetJsonAsync(string url, CancellationToken ct)
         {
-            for (int attempt = 1; attempt <= 5; attempt++)
+            int failures = 0, quotaHits = 0;
+            string lastError = "";
+            while (failures < 5)
             {
                 await limiter.WaitAsync(ct).ConfigureAwait(false);
                 try
@@ -93,25 +97,32 @@ namespace PlaylistDownloader
                         using (HttpResponseMessage response = await http.GetAsync(url, cts.Token).ConfigureAwait(false))
                         {
                             int status = (int)response.StatusCode;
-                            if (status == 429 || status >= 500)
+                            string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+
+                            JObject obj = null;
+                            try { obj = JObject.Parse(body); } catch (Exception) { }
+
+                            JObject err = obj == null ? null : obj["error"] as JObject;
+                            int code = err != null && err["code"] != null ? (int)err["code"] : 0;
+
+                            if (status == 429 || code == 4 || code == 700)
                             {
-                                limiter.PauseFor(2000 * attempt);
+                                quotaHits++;
+                                int wait = Math.Min(60000, 5000 * quotaHits);
+                                if (Trace != null) Trace("Quota Deezer superata, pausa di " + wait / 1000 + "s");
+                                limiter.PauseFor(wait);
+                                if (quotaHits > 30) throw new IOException("Quota Deezer superata troppe volte di seguito. Riduci le richieste ogni 5s e riprova.");
                                 continue;
                             }
-
-                            string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-                            JObject obj = JObject.Parse(body);
-                            JObject err = obj["error"] as JObject;
-                            if (err != null)
+                            if (status >= 500 || obj == null)
                             {
-                                int code = err["code"] != null ? (int)err["code"] : 0;
-                                if (code == 4 || code == 700)
-                                {
-                                    limiter.PauseFor(5000);
-                                    continue;
-                                }
-                                return null;
+                                lastError = "HTTP " + status;
+                                failures++;
+                                if (Trace != null) Trace(lastError + " da Deezer, riprovo (tentativo " + failures + ")");
+                                limiter.PauseFor(2000 * failures);
+                                continue;
                             }
+                            if (err != null) return null;
                             return obj;
                         }
                     }
@@ -119,14 +130,24 @@ namespace PlaylistDownloader
                 catch (OperationCanceledException)
                 {
                     if (ct.IsCancellationRequested) throw;
-                    limiter.PauseFor(1000 * attempt);
+                    lastError = "timeout";
+                    failures++;
+                    if (Trace != null) Trace("Timeout (tentativo " + failures + ")");
+                    limiter.PauseFor(1000 * failures);
                 }
-                catch (Exception)
+                catch (IOException) when (quotaHits > 30)
                 {
-                    limiter.PauseFor(1000 * attempt);
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    failures++;
+                    if (Trace != null) Trace("Errore di rete: " + ex.Message + " (tentativo " + failures + ")");
+                    limiter.PauseFor(1000 * failures);
                 }
             }
-            throw new IOException("Deezer non risponde: " + url);
+            throw new IOException("Deezer non risponde (" + lastError + "): " + url);
         }
 
         public async Task<JObject> GetAlbumAsync(long id, CancellationToken ct)
@@ -135,30 +156,74 @@ namespace PlaylistDownloader
             return obj == null || obj["id"] == null ? null : obj;
         }
 
+        private async Task<JObject> GetAlbumOrNullAsync(long id, CancellationToken ct)
+        {
+            try { return await GetAlbumAsync(id, ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception) { return null; }
+        }
+
+        // Newest albums known to Deezer: gives the current highest album id
+        public async Task<long> GetLatestAlbumIdAsync(CancellationToken ct)
+        {
+            long max = 0;
+            foreach (string url in new[] { "https://api.deezer.com/editorial/0/releases?limit=100", "https://api.deezer.com/chart/0/albums?limit=100" })
+            {
+                try
+                {
+                    JObject obj = await GetJsonAsync(url, ct).ConfigureAwait(false);
+                    JArray data = obj == null ? null : obj["data"] as JArray;
+                    if (data == null) continue;
+                    foreach (JObject a in data.OfType<JObject>())
+                    {
+                        long id;
+                        if (long.TryParse((string)a["id"], out id) && id > max) max = id;
+                    }
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception) { }
+            }
+            return max;
+        }
+
         // Album ids grow with time; the median release date of a few neighbouring albums is a robust time marker
         public async Task<DateTime?> ProbeDateAsync(long start, CancellationToken ct)
         {
             var dates = new List<DateTime>();
             long id = start;
-            for (int round = 0; round < 5 && dates.Count < 5; round++)
+            for (int round = 0; round < 8 && dates.Count < 3; round++)
             {
                 long first = id;
-                JObject[] albums = await Task.WhenAll(Enumerable.Range(0, 12).Select(i => GetAlbumAsync(first + i, ct))).ConfigureAwait(false);
+                JObject[] albums = await Task.WhenAll(Enumerable.Range(0, 10).Select(i => GetAlbumOrNullAsync(first + i, ct))).ConfigureAwait(false);
                 foreach (JObject a in albums)
                 {
                     DateTime d;
                     if (a != null && TryParseDate((string)a["release_date"], out d))
                         dates.Add(d);
                 }
-                id += 12;
+                id += 10;
             }
-            if (dates.Count == 0) return null;
+            if (dates.Count == 0)
+            {
+                if (Trace != null) Trace("Sondaggio ID " + start + ": nessun album valido");
+                return null;
+            }
             dates.Sort();
-            return dates[dates.Count / 2];
+            DateTime median = dates[dates.Count / 2];
+            if (Trace != null) Trace("Sondaggio ID " + start + ": data " + median.ToString("dd/MM/yyyy"));
+            return median;
         }
 
         public async Task<long> FindUpperBoundAsync(DateTime stopDate, CancellationToken ct)
         {
+            long latest = await GetLatestAlbumIdAsync(ct).ConfigureAwait(false);
+            if (latest > 0)
+            {
+                if (Trace != null) Trace("Album piu' recente noto: ID " + latest);
+                return latest + latest / 20 + 100000;
+            }
+
+            if (Trace != null) Trace("Impossibile leggere le novita' Deezer: stima dell'ID massimo per raddoppio");
             long hi = 1000000;
             while (hi < (1L << 40))
             {
@@ -363,6 +428,10 @@ namespace PlaylistDownloader
 
             int threads = (int)numThreads.Value;
             var client = new DeezerApiClient(http, (int)numRate.Value);
+            client.Trace = msg =>
+            {
+                try { if (!IsDisposed) BeginInvoke(new Action(() => Log(msg))); } catch (Exception) { }
+            };
             cts = new CancellationTokenSource();
             CancellationToken ct = cts.Token;
 
@@ -381,7 +450,7 @@ namespace PlaylistDownloader
                 if (!hasFrom || !hasTo)
                 {
                     phase = "Ricerca dell'intervallo di ID album...";
-                    Log(phase);
+                    Log(phase + " (ogni sondaggio richiede alcune decine di richieste: con il limite di quota possono servire diversi minuti)");
                     DateTime stopDate = to.AddDays(1 + (int)numAfter.Value);
                     long bound = await client.FindUpperBoundAsync(stopDate, ct);
                     if (!hasFrom) loId = await client.FindFirstIdAsync(from.AddDays(-(int)numBefore.Value), bound, ct);
