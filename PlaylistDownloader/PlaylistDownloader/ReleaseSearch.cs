@@ -336,6 +336,7 @@ namespace PlaylistDownloader
             btnPause = DialogHelper.AddButton(this, "Pausa", 138, 258, 90, btnPause_Click);
             btnStop = DialogHelper.AddButton(this, "Ferma", 236, 258, 90, btnStop_Click);
             btnExport = DialogHelper.AddButton(this, "Esporta CSV...", 334, 258, 130, btnExport_Click);
+            DialogHelper.AddButton(this, "Apri cartella Ricerche", 472, 258, 160, btnOpenFolder_Click);
             btnPause.Enabled = btnStop.Enabled = btnExport.Enabled = false;
 
             bar = new ProgressBar { Location = new Point(10, 294), Size = new Size(740, 20), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, Maximum = 1000 };
@@ -472,8 +473,7 @@ namespace PlaylistDownloader
                     throw new InvalidOperationException("Intervallo ID album non valido: " + loId + " - " + hiId);
 
                 Log(string.Format("Scansione ID album da {0} a {1} ({2:N0} ID)", loId, hiId, hiId - loId));
-                string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PlaylistDownloader", "releasesearch");
-                Directory.CreateDirectory(dir);
+                string dir = GetOutputDir();
                 currentFile = Path.Combine(dir, string.Format("release_{0:yyyyMMdd}_{1:yyyyMMdd}_{2:yyyyMMdd_HHmmss}.csv", from, to, DateTime.Now));
                 Log("File di lavoro (salvataggio continuo): " + currentFile);
 
@@ -525,6 +525,32 @@ namespace PlaylistDownloader
                     RefreshStats();
                 }
             }
+        }
+
+        // "Ricerche" next to the exe; falls back to LocalAppData when that folder is not writable
+        private static string GetOutputDir()
+        {
+            try
+            {
+                string dir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Ricerche");
+                Directory.CreateDirectory(dir);
+                string probe = Path.Combine(dir, ".write_test");
+                File.WriteAllText(probe, "");
+                File.Delete(probe);
+                return dir;
+            }
+            catch (Exception)
+            {
+                string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PlaylistDownloader", "Ricerche");
+                Directory.CreateDirectory(dir);
+                return dir;
+            }
+        }
+
+        private void btnOpenFolder_Click(object sender, EventArgs e)
+        {
+            string dir = currentFile != null ? Path.GetDirectoryName(currentFile) : GetOutputDir();
+            Process.Start("explorer.exe", dir);
         }
 
         private void CloseWriter()
