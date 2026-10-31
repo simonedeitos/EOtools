@@ -40,8 +40,11 @@ namespace PlaylistDownloader
         {
             InitializeComponent();
             InitializeTables();
+            System.Net.ServicePointManager.DefaultConnectionLimit = 64;
+            System.Net.ServicePointManager.Expect100Continue = false;
             httpClient = new HttpClient();
             httpClient.Timeout = TimeSpan.FromMinutes(5); // Increased timeout for API calls
+            InitEnhancements();
 
             this.Load += MainForm_Load;
             this.FormClosing += MainForm_FormClosing;
@@ -81,16 +84,15 @@ namespace PlaylistDownloader
             dgvResults.Columns["Track Link"].Visible = false;
             dgvResults.RowHeadersVisible = false;
 
-            // Set auto-size modes for better appearance
-            foreach (DataGridViewColumn col in dgvPlaylists.Columns)
+            // Resizable columns with sensible default widths (saved widths are restored on load)
+            ApplyColumnDefaults(dgvPlaylists, new Dictionary<string, int>
             {
-                col.AutoSizeMode = DataGridViewAutoSizeColumnMode.AllCells;
-            }
-
-            foreach (DataGridViewColumn col in dgvResults.Columns)
+                { "ID", 40 }, { "Platform", 80 }, { "Playlist URL", 300 }, { "Name", 200 }, { "Status", 100 }
+            });
+            ApplyColumnDefaults(dgvResults, new Dictionary<string, int>
             {
-                col.AutoSizeMode = DataGridViewAutoSizeColumnMode.AllCells;
-            }
+                { "Platform", 90 }, { "Playlist Name", 170 }, { "Artist", 180 }, { "Title", 240 }, { "ISRC", 120 }, { "Track ID", 100 }
+            });
 
             // Convert the "Selected" column to a checkbox
             if (dgvPlaylists.Columns["Selected"] is DataGridViewCheckBoxColumn == false)
@@ -111,6 +113,7 @@ namespace PlaylistDownloader
         {
             int count = resultsTable != null ? resultsTable.Rows.Count : 0;
             lblResults.Text = $"Results ({count} tracks)";
+            UpdateCounters();
 
             // Force UI update
             lblResults.Update();
@@ -147,6 +150,7 @@ namespace PlaylistDownloader
             btnAddPlaylist.Enabled = !isProcessing;
             btnImportCSV.Enabled = !isProcessing;
             btnImportISRC.Enabled = !isProcessing; // Add this line
+            btnPasteLinks.Enabled = !isProcessing;
         }
 
         #region UI Formatting
@@ -664,6 +668,8 @@ namespace PlaylistDownloader
             btnRemovePlaylist.Enabled = !isProcessing;
             btnDownload.Enabled = !isProcessing && resultsTable.Rows.Count > 0;
             btnImportCSV.Enabled = !isProcessing;
+            btnImportISRC.Enabled = !isProcessing;
+            btnPasteLinks.Enabled = !isProcessing;
             progressBarMain.Visible = isProcessing;
             progressBarTrack.Visible = isProcessing;
             lblProgress.Visible = isProcessing;
@@ -884,7 +890,14 @@ namespace PlaylistDownloader
             if (optionsForm.ShowDialog() == DialogResult.OK)
             {
                 var options = optionsForm.DownloadOptions;
-                GenerateDownloadBatchFile(options);
+                DialogResult mode = MessageBox.Show(
+                    "Avviare il download nella finestra integrata (multithread)?\n\nSì = finestra download\nNo = genera i file .bat sul desktop (modalità precedente)",
+                    "Modalità download", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+
+                if (mode == DialogResult.Yes)
+                    OpenDownloadWindow(options);
+                else if (mode == DialogResult.No)
+                    GenerateDownloadBatchFile(options);
             }
         }
 
@@ -921,18 +934,7 @@ namespace PlaylistDownloader
                         List<TrackInfo> importedTracks = await ImportTracksFromCSV(openDialog.FileName);
 
                         // Add imported tracks to results
-                        foreach (var track in importedTracks)
-                        {
-                            resultsTable.Rows.Add(
-                                track.Platform,
-                                track.PlaylistName,
-                                track.Artist,
-                                track.Title,
-                                track.ISRC,
-                                track.TrackID,
-                                track.TrackLink
-                            );
-                        }
+                        AddTracksToResults(importedTracks);
 
                         UpdateResultCount();
 
@@ -1009,13 +1011,6 @@ namespace PlaylistDownloader
                     if (string.IsNullOrWhiteSpace(line))
                         continue;
 
-                    // Update progress bars
-                    progressBarMain.Value = i - startLine + 1;
-                    processedTracks = i - startLine + 1;
-                    progressBarTrack.Value = processedTracks;
-                    lblProgress.Text = $"Processing tracks: {processedTracks}/{totalTracks}";
-                    Application.DoEvents();
-
                     // Parse the CSV line using detected separator
                     string[] parts = line.Split(separator);
 
@@ -1045,24 +1040,13 @@ namespace PlaylistDownloader
                             PlaylistName = "Imported CSV"
                         };
 
-                        // Lookup the Deezer Track ID using the ISRC
-                        string trackId = await GetTrackIdFromISRC(isrc);
-
-                        if (!string.IsNullOrEmpty(trackId))
-                        {
-                            track.TrackID = trackId;
-                            track.TrackLink = $"https://www.deezer.com/track/{trackId}";
-                            validTracks++;
-                        }
-                        else
-                        {
-                            track.TrackID = "Not found";
-                            invalidTracks++;
-                        }
-
                         tracks.Add(track);
                     }
                 }
+
+                // Parallel lookup of the Deezer track IDs (deduplicated ISRCs)
+                validTracks = await ResolveTrackIdsAsync(tracks, "Searching Deezer", false);
+                invalidTracks += tracks.Count - validTracks;
 
                 // Show summary in the progress label
                 lblProgress.Text = $"Imported: {validTracks} valid tracks, {invalidTracks} without track ID";
@@ -1391,35 +1375,22 @@ namespace PlaylistDownloader
 
                             tracks.Add(track);
 
-                            // Lookup Deezer Track ID if we have an ISRC
-                            if (!string.IsNullOrWhiteSpace(isrc) && isrc != "N/A")
-                            {
-                                string trackId = await GetTrackIdFromISRC(isrc);
-                                int lastIndex = tracks.Count - 1;
-
-                                if (!string.IsNullOrEmpty(trackId))
-                                {
-                                    tracks[lastIndex].TrackID = trackId;
-                                    tracks[lastIndex].TrackLink = $"https://www.deezer.com/track/{trackId}";
-                                }
-                                else
-                                {
-                                    tracks[lastIndex].TrackID = "Not found";
-                                }
-                            }
-                            else
+                            // Tracks without ISRC cannot be looked up; the others are resolved in parallel after the loop
+                            if (string.IsNullOrWhiteSpace(isrc) || isrc == "N/A")
                             {
                                 tracks[tracks.Count - 1].TrackID = "N/A";
                             }
 
                             // Update progress
                             processedTracks++;
-                            progressBarTrack.Value = processedTracks;
+                            progressBarTrack.Value = Math.Min(processedTracks, progressBarTrack.Maximum);
                             lblProgress.Text = $"Processing tracks: {processedTracks}/{totalTracks}";
                             Application.DoEvents();
                         }
                     }
                 }
+
+                await ResolveTrackIdsAsync(tracks, "Searching Deezer", false, false);
 
                 return RemoveDuplicateTracks(tracks);
             }
@@ -1762,18 +1733,7 @@ namespace PlaylistDownloader
                         List<TrackInfo> importedTracks = await ImportISRCsFromTxt(openDialog.FileName);
 
                         // Add imported tracks to results
-                        foreach (var track in importedTracks)
-                        {
-                            resultsTable.Rows.Add(
-                                track.Platform,
-                                track.PlaylistName,
-                                track.Artist,
-                                track.Title,
-                                track.ISRC,
-                                track.TrackID,
-                                track.TrackLink
-                            );
-                        }
+                        AddTracksToResults(importedTracks);
 
                         UpdateResultCount();
 
@@ -1834,19 +1794,9 @@ namespace PlaylistDownloader
                 progressBarMain.Maximum = totalTracks;
                 progressBarTrack.Maximum = totalTracks;
 
-                for (int i = 0; i < isrcList.Count; i++)
+                foreach (string isrc in isrcList)
                 {
-                    string isrc = isrcList[i];
-
-                    // Update progress bars
-                    progressBarMain.Value = i + 1;
-                    processedTracks = i + 1;
-                    progressBarTrack.Value = processedTracks;
-                    lblProgress.Text = $"Processing ISRCs: {processedTracks}/{totalTracks}";
-                    Application.DoEvents();
-
-                    // Create the track with Searching status
-                    TrackInfo track = new TrackInfo
+                    tracks.Add(new TrackInfo
                     {
                         Artist = "Unknown",
                         Title = "Unknown",
@@ -1855,27 +1805,12 @@ namespace PlaylistDownloader
                         TrackLink = "N/A",
                         Platform = "ISRC",
                         PlaylistName = "Imported ISRC List"
-                    };
-
-                    // Lookup the Deezer Track ID and metadata using the ISRC
-                    var trackData = await GetTrackDataFromISRC(isrc);
-
-                    if (trackData != null)
-                    {
-                        track.Artist = trackData.Artist;
-                        track.Title = trackData.Title;
-                        track.TrackID = trackData.TrackID;
-                        track.TrackLink = trackData.TrackLink;
-                        validTracks++;
-                    }
-                    else
-                    {
-                        track.TrackID = "Not found";
-                        invalidTracks++;
-                    }
-
-                    tracks.Add(track);
+                    });
                 }
+
+                // Parallel lookup of Deezer track IDs and metadata
+                validTracks = await ResolveTrackIdsAsync(tracks, "Searching Deezer", true);
+                invalidTracks = tracks.Count - validTracks;
 
                 // Show summary in the progress label
                 lblProgress.Text = $"Imported: {validTracks} valid tracks, {invalidTracks} not found";
