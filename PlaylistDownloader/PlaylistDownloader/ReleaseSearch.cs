@@ -258,7 +258,7 @@ namespace PlaylistDownloader
         private Label lblPeriod, lblTo, lblStats;
         private NumericUpDown numThreads, numRate, numBefore, numAfter;
         private TextBox txtIdFrom, txtIdTo, txtLog;
-        private CheckBox chkIsrc;
+        private CheckBox chkIsrc, chkSaveAll;
         private Button btnStart, btnPause, btnStop, btnExport;
         private ProgressBar bar;
         private System.Windows.Forms.Timer timer;
@@ -273,7 +273,9 @@ namespace PlaylistDownloader
         private ConcurrentBag<long> failedIds = new ConcurrentBag<long>();
 
         private long loId, hiId, nextId;
-        private long scanned, albumsValid, albumsInRange, tracksFound, failedCount, isrcDone;
+        private long scanned, albumsValid, albumsInRange, tracksFound, tracksInPeriod, failedCount, isrcDone;
+        private DateTime periodFrom, periodTo;
+        private bool saveAll;
         private string phase = "";
 
         public bool IsRunning { get { return running; } }
@@ -313,7 +315,7 @@ namespace PlaylistDownloader
             dtTo.ValueChanged += (s, e) => UpdatePeriodText();
             ModeChanged(null, EventArgs.Empty);
 
-            var gbOpt = new GroupBox { Text = "Opzioni", Location = new Point(10, 110), Size = new Size(740, 116), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+            var gbOpt = new GroupBox { Text = "Opzioni", Location = new Point(10, 110), Size = new Size(740, 138), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             DialogHelper.AddLabel(gbOpt, "Thread:", 15, 24, 55);
             numThreads = new NumericUpDown { Location = new Point(72, 21), Size = new Size(55, 22), Minimum = 1, Maximum = 64, Value = AppSettings.LookupThreads };
             DialogHelper.AddLabel(gbOpt, "Richieste / 5s:", 145, 24, 90);
@@ -326,21 +328,22 @@ namespace PlaylistDownloader
             txtIdFrom = new TextBox { Location = new Point(127, 53), Size = new Size(110, 22) };
             DialogHelper.AddLabel(gbOpt, "a (opz.):", 255, 56, 55);
             txtIdTo = new TextBox { Location = new Point(312, 53), Size = new Size(110, 22) };
-            chkIsrc = new CheckBox { Text = "Recupera anche l'ISRC (1 richiesta in più per brano: molto più lento)", Location = new Point(15, 84), Size = new Size(600, 22) };
-            gbOpt.Controls.AddRange(new Control[] { numThreads, numRate, numBefore, numAfter, txtIdFrom, txtIdTo, chkIsrc });
+            chkSaveAll = new CheckBox { Text = "Salva TUTTI i brani scansionati con la Release Date (anche fuori periodo): poi filtri il CSV senza rilanciare la ricerca", Location = new Point(15, 82), Size = new Size(715, 22), Checked = true };
+            chkIsrc = new CheckBox { Text = "Recupera anche l'ISRC dei brani nel periodo (1 richiesta in più per brano: molto più lento)", Location = new Point(15, 106), Size = new Size(700, 22) };
+            gbOpt.Controls.AddRange(new Control[] { numThreads, numRate, numBefore, numAfter, txtIdFrom, txtIdTo, chkSaveAll, chkIsrc });
 
-            btnStart = DialogHelper.AddButton(this, "Avvia ricerca", 10, 236, 120, btnStart_Click);
-            btnPause = DialogHelper.AddButton(this, "Pausa", 138, 236, 90, btnPause_Click);
-            btnStop = DialogHelper.AddButton(this, "Ferma", 236, 236, 90, btnStop_Click);
-            btnExport = DialogHelper.AddButton(this, "Esporta CSV...", 334, 236, 130, btnExport_Click);
+            btnStart = DialogHelper.AddButton(this, "Avvia ricerca", 10, 258, 120, btnStart_Click);
+            btnPause = DialogHelper.AddButton(this, "Pausa", 138, 258, 90, btnPause_Click);
+            btnStop = DialogHelper.AddButton(this, "Ferma", 236, 258, 90, btnStop_Click);
+            btnExport = DialogHelper.AddButton(this, "Esporta CSV...", 334, 258, 130, btnExport_Click);
             btnPause.Enabled = btnStop.Enabled = btnExport.Enabled = false;
 
-            bar = new ProgressBar { Location = new Point(10, 272), Size = new Size(740, 20), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, Maximum = 1000 };
-            lblStats = new Label { Location = new Point(10, 298), Size = new Size(740, 60), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+            bar = new ProgressBar { Location = new Point(10, 294), Size = new Size(740, 20), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, Maximum = 1000 };
+            lblStats = new Label { Location = new Point(10, 320), Size = new Size(740, 60), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             txtLog = new TextBox
             {
-                Location = new Point(10, 364),
-                Size = new Size(740, 226),
+                Location = new Point(10, 386),
+                Size = new Size(740, 204),
                 Multiline = true,
                 ReadOnly = true,
                 ScrollBars = ScrollBars.Vertical,
@@ -399,7 +402,7 @@ namespace PlaylistDownloader
             btnPause.Text = "Pausa";
             paused = false;
             btnExport.Enabled = !value && currentFile != null && File.Exists(currentFile);
-            foreach (Control c in new Control[] { rbMonth, rbMonths, rbRange, dtFrom, dtTo, numThreads, numRate, numBefore, numAfter, txtIdFrom, txtIdTo, chkIsrc })
+            foreach (Control c in new Control[] { rbMonth, rbMonths, rbRange, dtFrom, dtTo, numThreads, numRate, numBefore, numAfter, txtIdFrom, txtIdTo, chkSaveAll, chkIsrc })
                 c.Enabled = !value;
         }
 
@@ -435,8 +438,11 @@ namespace PlaylistDownloader
             cts = new CancellationTokenSource();
             CancellationToken ct = cts.Token;
 
-            scanned = albumsValid = albumsInRange = tracksFound = failedCount = isrcDone = 0;
+            scanned = albumsValid = albumsInRange = tracksFound = tracksInPeriod = failedCount = isrcDone = 0;
             failedIds = new ConcurrentBag<long>();
+            periodFrom = from;
+            periodTo = to;
+            saveAll = chkSaveAll.Checked;
             bar.Value = 0;
             SetRunning(true);
             active.Reset();
@@ -466,7 +472,7 @@ namespace PlaylistDownloader
                 Log("File di lavoro (salvataggio continuo): " + currentFile);
 
                 writer = new StreamWriter(new FileStream(currentFile, FileMode.Create, FileAccess.Write, FileShare.ReadWrite), new UTF8Encoding(true));
-                writer.WriteLine("Artista;Titolo;ISRC;Track ID");
+                writer.WriteLine("Artista;Titolo;ISRC;Track ID;Release Date");
                 writer.Flush();
 
                 phase = "Scansione album";
@@ -480,9 +486,9 @@ namespace PlaylistDownloader
                 }
                 CloseWriter();
 
-                Log(string.Format("Scansione completata: {0:N0} album nel periodo, {1:N0} brani. ID falliti: {2}", albumsInRange, tracksFound, failedIds.Count));
+                Log(string.Format("Scansione completata: {0:N0} album nel periodo, {1:N0} brani nel periodo ({2:N0} brani salvati in totale). ID falliti: {3}", albumsInRange, tracksInPeriod, tracksFound, failedIds.Count));
 
-                if (chkIsrc.Checked && tracksFound > 0)
+                if (chkIsrc.Checked && tracksInPeriod > 0)
                 {
                     phase = "Recupero ISRC";
                     Log(phase);
@@ -575,9 +581,12 @@ namespace PlaylistDownloader
                 Interlocked.Increment(ref albumsValid);
 
                 DateTime rd;
-                if (!DeezerApiClient.TryParseDate((string)album["release_date"], out rd) || rd < from || rd > to)
+                bool hasDate = DeezerApiClient.TryParseDate((string)album["release_date"], out rd);
+                bool inPeriod = hasDate && rd >= from && rd <= to;
+                if (!inPeriod && !saveAll)
                     return;
-                Interlocked.Increment(ref albumsInRange);
+                if (inPeriod) Interlocked.Increment(ref albumsInRange);
+                string dateText = hasDate ? rd.ToString("yyyy-MM-dd") : "";
 
                 var rows = new List<string>();
                 JObject tracks = album["tracks"] as JObject;
@@ -597,7 +606,7 @@ namespace PlaylistDownloader
                                 JObject albumArtist = album["artist"] as JObject;
                                 name = albumArtist != null ? (string)albumArtist["name"] : "";
                             }
-                            rows.Add(CsvUtil.Escape(name, ';') + ";" + CsvUtil.Escape((string)t["title"], ';') + ";;" + tid);
+                            rows.Add(CsvUtil.Escape(name, ';') + ";" + CsvUtil.Escape((string)t["title"], ';') + ";;" + tid + ";" + dateText);
                         }
                     }
                     string next = (string)tracks["next"];
@@ -610,6 +619,7 @@ namespace PlaylistDownloader
                         foreach (string r in rows) writer.WriteLine(r);
                 }
                 Interlocked.Add(ref tracksFound, rows.Count);
+                if (inPeriod) Interlocked.Add(ref tracksInPeriod, rows.Count);
             }
             catch (OperationCanceledException)
             {
@@ -650,8 +660,13 @@ namespace PlaylistDownloader
                         await sem.WaitAsync(ct).ConfigureAwait(false);
                         try
                         {
-                            JObject t = await client.GetJsonAsync("https://api.deezer.com/track/" + f[3], ct).ConfigureAwait(false);
-                            f[2] = t == null ? "" : ((string)t["isrc"] ?? "");
+                            DateTime d;
+                            bool inPeriod = f.Count < 5 || !DeezerApiClient.TryParseDate(f[4], out d) || (d >= periodFrom && d <= periodTo);
+                            if (inPeriod)
+                            {
+                                JObject t = await client.GetJsonAsync("https://api.deezer.com/track/" + f[3], ct).ConfigureAwait(false);
+                                f[2] = t == null ? "" : ((string)t["isrc"] ?? "");
+                            }
                         }
                         catch (OperationCanceledException)
                         {
@@ -704,8 +719,8 @@ namespace PlaylistDownloader
                 sb.AppendLine(string.Format("ID scansionati: {0:N0} / {1:N0} ({2:0.0}%) - {3:0.0} ID/s{4}", sc, total, sc * 100.0 / total, rate, eta));
             }
 
-            sb.Append(string.Format("Album validi: {0:N0}   Album nel periodo: {1:N0}   Brani trovati: {2:N0}   ID falliti: {3:N0}",
-                Interlocked.Read(ref albumsValid), Interlocked.Read(ref albumsInRange), Interlocked.Read(ref tracksFound), Interlocked.Read(ref failedCount)));
+            sb.Append(string.Format("Album validi: {0:N0}   Album nel periodo: {1:N0}   Brani nel periodo: {2:N0}   Brani salvati: {3:N0}   ID falliti: {4:N0}",
+                Interlocked.Read(ref albumsValid), Interlocked.Read(ref albumsInRange), Interlocked.Read(ref tracksInPeriod), Interlocked.Read(ref tracksFound), Interlocked.Read(ref failedCount)));
             lblStats.Text = sb.ToString();
         }
 
@@ -734,13 +749,44 @@ namespace PlaylistDownloader
                 if (dlg.ShowDialog(this) != DialogResult.OK) return;
                 try
                 {
-                    CopySharedFile(currentFile, dlg.FileName);
+                    bool onlyPeriod = false;
+                    if (saveAll && tracksFound > tracksInPeriod)
+                    {
+                        onlyPeriod = MessageBox.Show(
+                            string.Format("Il file contiene anche brani fuori periodo.\n\nSì = esporta solo i brani con release date {0:dd/MM/yyyy} - {1:dd/MM/yyyy}\nNo = esporta tutto (con la colonna Release Date)", periodFrom, periodTo),
+                            Text, MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
+                    }
+                    if (onlyPeriod) ExportPeriodOnly(currentFile, dlg.FileName);
+                    else CopySharedFile(currentFile, dlg.FileName);
                     Log("Esportato: " + dlg.FileName);
                     MessageBox.Show("CSV esportato:\n" + dlg.FileName, Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
                 catch (Exception ex)
                 {
                     MessageBox.Show(ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
+
+        private void ExportPeriodOnly(string src, string dst)
+        {
+            lock (writerLock)
+            {
+                if (writer != null) writer.Flush();
+                using (var input = new FileStream(src, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var reader = new StreamReader(input, Encoding.UTF8))
+                using (var output = new StreamWriter(new FileStream(dst, FileMode.Create, FileAccess.Write), new UTF8Encoding(true)))
+                {
+                    output.WriteLine(reader.ReadLine());
+                    string line;
+                    while ((line = reader.ReadLine()) != null)
+                    {
+                        if (line.Length == 0) continue;
+                        List<string> f = CsvUtil.ParseLine(line, ';');
+                        DateTime d;
+                        if (f.Count >= 5 && DeezerApiClient.TryParseDate(f[4], out d) && d >= periodFrom && d <= periodTo)
+                            output.WriteLine(line);
+                    }
                 }
             }
         }
