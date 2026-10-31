@@ -62,6 +62,11 @@ namespace PlaylistDownloader
         }
     }
 
+    internal sealed class DeezerBlockedException : Exception
+    {
+        public DeezerBlockedException(string message) : base(message) { }
+    }
+
     // Thin Deezer public API client with a shared rate limiter and retry on quota errors
     internal sealed class DeezerApiClient
     {
@@ -70,10 +75,83 @@ namespace PlaylistDownloader
 
         public Action<string> Trace;
 
+        private readonly Stopwatch clock = Stopwatch.StartNew();
+        private readonly object gate = new object();
+        private readonly long intervalMs;
+        private long nextSlot;
+        private long cooldownUntil;
+        private int forbiddenStreak, cooldownCount;
+
         public DeezerApiClient(HttpClient http, int maxPer5s)
         {
             this.http = http;
             limiter = new RateLimiter(maxPer5s, 5000);
+            intervalMs = Math.Max(1, 5000 / Math.Max(1, maxPer5s));
+        }
+
+        // Spreads requests evenly: bursts are what the Deezer CDN firewall punishes with 403 "Access Denied"
+        private async Task SpacingAsync(CancellationToken ct)
+        {
+            long wait;
+            lock (gate)
+            {
+                long now = clock.ElapsedMilliseconds;
+                long slot = Math.Max(now, nextSlot);
+                nextSlot = slot + intervalMs;
+                wait = slot - now;
+            }
+            if (wait > 0) await Task.Delay((int)wait, ct).ConfigureAwait(false);
+        }
+
+        private async Task WaitCooldownAsync(CancellationToken ct)
+        {
+            while (true)
+            {
+                long ms;
+                lock (gate)
+                {
+                    ms = cooldownUntil - clock.ElapsedMilliseconds;
+                    if (ms <= 0)
+                    {
+                        if (cooldownUntil > 0) { cooldownUntil = 0; forbiddenStreak = 0; }
+                        return;
+                    }
+                }
+                await Task.Delay((int)Math.Min(ms, 1000), ct).ConfigureAwait(false);
+            }
+        }
+
+        private void RegisterSuccess()
+        {
+            lock (gate) { forbiddenStreak = 0; cooldownCount = 0; }
+        }
+
+        // After 3 consecutive 403 the IP is considered temporarily blocked: all requests pause (10, 20, 30... up to 60 minutes)
+        private void RegisterForbidden(string body)
+        {
+            string message = null;
+            bool fatal = false;
+            lock (gate)
+            {
+                forbiddenStreak++;
+                if (forbiddenStreak >= 3 && cooldownUntil <= clock.ElapsedMilliseconds)
+                {
+                    cooldownCount++;
+                    if (cooldownCount > 6)
+                    {
+                        fatal = true;
+                    }
+                    else
+                    {
+                        int minutes = Math.Min(60, 10 * cooldownCount);
+                        cooldownUntil = clock.ElapsedMilliseconds + minutes * 60000L;
+                        message = "Deezer ha bloccato temporaneamente l'accesso (HTTP 403 Access Denied). Pausa di " + minutes + " minuti, poi riprovo automaticamente (blocco n. " + cooldownCount + ").";
+                    }
+                }
+            }
+            if (fatal)
+                throw new DeezerBlockedException("Deezer continua a rispondere 403 Access Denied: l'IP risulta bloccato. Aspetta qualche ora o cambia connessione (hotspot/VPN), riduci le richieste ogni 5s e riprova.");
+            if (message != null && Trace != null) Trace(message);
         }
 
         public static bool TryParseDate(string s, out DateTime date)
@@ -84,21 +162,19 @@ namespace PlaylistDownloader
         // Returns null when the resource does not exist; quota errors are waited out, other failures throw after 5 attempts
         public async Task<JObject> GetJsonAsync(string url, CancellationToken ct, bool optional = false)
         {
-            int failures = 0, quotaHits = 0;
+            int failures = 0, quotaHits = 0, forbiddenLocal = 0;
             string lastError = "";
             while (failures < 5)
             {
+                await WaitCooldownAsync(ct).ConfigureAwait(false);
+                await SpacingAsync(ct).ConfigureAwait(false);
                 await limiter.WaitAsync(ct).ConfigureAwait(false);
                 try
                 {
                     using (var cts = CancellationTokenSource.CreateLinkedTokenSource(ct))
                     {
                         cts.CancelAfter(TimeSpan.FromSeconds(30));
-                        using (var request = new HttpRequestMessage(HttpMethod.Get, url))
-                        {
-                            request.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) PlaylistDownloader");
-                            request.Headers.TryAddWithoutValidation("Accept", "application/json");
-                        using (HttpResponseMessage response = await http.SendAsync(request, cts.Token).ConfigureAwait(false))
+                        using (HttpResponseMessage response = await http.GetAsync(url, cts.Token).ConfigureAwait(false))
                         {
                             int status = (int)response.StatusCode;
                             string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
@@ -123,19 +199,24 @@ namespace PlaylistDownloader
                                 if (Trace != null) Trace("Endpoint non disponibile (HTTP " + status + "): " + url);
                                 return null;
                             }
-                            if (status >= 500 || status == 403 || obj == null)
+                            if (status == 403)
+                            {
+                                lastError = "HTTP 403";
+                                RegisterForbidden(body);
+                                if (++forbiddenLocal > 6) failures = 5;
+                                continue;
+                            }
+                            if (status >= 500 || obj == null)
                             {
                                 lastError = "HTTP " + status;
-                                if (status == 403 && Trace != null)
-                                    Trace("HTTP 403 su " + url + " - risposta: " + (body.Length > 150 ? body.Substring(0, 150) : body));
                                 failures++;
                                 if (Trace != null) Trace(lastError + " da Deezer, riprovo (tentativo " + failures + ")");
                                 limiter.PauseFor(2000 * failures);
                                 continue;
                             }
+                            RegisterSuccess();
                             if (err != null) return null;
                             return obj;
-                        }
                         }
                     }
                 }
@@ -146,6 +227,10 @@ namespace PlaylistDownloader
                     failures++;
                     if (Trace != null) Trace("Timeout (tentativo " + failures + ")");
                     limiter.PauseFor(1000 * failures);
+                }
+                catch (DeezerBlockedException)
+                {
+                    throw;
                 }
                 catch (IOException) when (quotaHits > 30)
                 {
@@ -172,6 +257,7 @@ namespace PlaylistDownloader
         {
             try { return await GetAlbumAsync(id, ct).ConfigureAwait(false); }
             catch (OperationCanceledException) { throw; }
+            catch (DeezerBlockedException) { throw; }
             catch (Exception) { return null; }
         }
 
@@ -193,6 +279,7 @@ namespace PlaylistDownloader
                     }
                 }
                 catch (OperationCanceledException) { throw; }
+                catch (DeezerBlockedException) { throw; }
                 catch (Exception) { }
             }
             return max;
@@ -329,9 +416,9 @@ namespace PlaylistDownloader
 
             var gbOpt = new GroupBox { Text = "Opzioni", Location = new Point(10, 110), Size = new Size(740, 138), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             DialogHelper.AddLabel(gbOpt, "Thread:", 15, 24, 55);
-            numThreads = new NumericUpDown { Location = new Point(72, 21), Size = new Size(55, 22), Minimum = 1, Maximum = 64, Value = AppSettings.LookupThreads };
+            numThreads = new NumericUpDown { Location = new Point(72, 21), Size = new Size(55, 22), Minimum = 1, Maximum = 64, Value = 8 };
             DialogHelper.AddLabel(gbOpt, "Richieste / 5s:", 145, 24, 90);
-            numRate = new NumericUpDown { Location = new Point(237, 21), Size = new Size(60, 22), Minimum = 5, Maximum = 500, Value = AppSettings.LookupRatePer5s };
+            numRate = new NumericUpDown { Location = new Point(237, 21), Size = new Size(60, 22), Minimum = 5, Maximum = 500, Value = 20 };
             DialogHelper.AddLabel(gbOpt, "Margine ID (giorni) prima:", 320, 24, 150);
             numBefore = new NumericUpDown { Location = new Point(472, 21), Size = new Size(50, 22), Minimum = 0, Maximum = 365, Value = 14 };
             DialogHelper.AddLabel(gbOpt, "dopo:", 535, 24, 40);
@@ -523,6 +610,7 @@ namespace PlaylistDownloader
             catch (Exception ex)
             {
                 phase = "Errore";
+                if (cts != null) cts.Cancel();
                 Log("Errore: " + ex.Message);
                 if (!IsDisposed)
                     MessageBox.Show(ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -669,6 +757,10 @@ namespace PlaylistDownloader
             {
                 throw;
             }
+            catch (DeezerBlockedException)
+            {
+                throw;
+            }
             catch (Exception)
             {
                 failedIds.Add(id);
@@ -713,6 +805,10 @@ namespace PlaylistDownloader
                             }
                         }
                         catch (OperationCanceledException)
+                        {
+                            throw;
+                        }
+                        catch (DeezerBlockedException)
                         {
                             throw;
                         }
