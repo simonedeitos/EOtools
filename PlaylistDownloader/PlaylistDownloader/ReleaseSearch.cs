@@ -303,9 +303,9 @@ namespace PlaylistDownloader
             rbMonths = new RadioButton { Text = "Più mesi", Location = new Point(145, 22), Size = new Size(110, 22) };
             rbRange = new RadioButton { Text = "Intervallo di date (da - a)", Location = new Point(265, 22), Size = new Size(200, 22) };
             DialogHelper.AddLabel(gbPeriod, "Da:", 15, 62, 28);
-            dtFrom = new DateTimePicker { Location = new Point(45, 58), Size = new Size(110, 22), Value = DateTime.Today };
+            dtFrom = new DateTimePicker { Location = new Point(45, 58), Size = new Size(110, 22), Value = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1) };
             lblTo = DialogHelper.AddLabel(gbPeriod, "A:", 175, 62, 24);
-            dtTo = new DateTimePicker { Location = new Point(203, 58), Size = new Size(110, 22), Value = DateTime.Today };
+            dtTo = new DateTimePicker { Location = new Point(203, 58), Size = new Size(110, 22), Value = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1) };
             lblPeriod = new Label { Location = new Point(335, 62), Size = new Size(395, 20), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             gbPeriod.Controls.AddRange(new Control[] { rbMonth, rbMonths, rbRange, dtFrom, dtTo, lblPeriod });
             rbMonth.CheckedChanged += ModeChanged;
@@ -336,6 +336,7 @@ namespace PlaylistDownloader
             btnPause = DialogHelper.AddButton(this, "Pausa", 138, 258, 90, btnPause_Click);
             btnStop = DialogHelper.AddButton(this, "Ferma", 236, 258, 90, btnStop_Click);
             btnExport = DialogHelper.AddButton(this, "Esporta CSV...", 334, 258, 130, btnExport_Click);
+            DialogHelper.AddButton(this, "Apri cartella Ricerche", 472, 258, 160, btnOpenFolder_Click);
             btnPause.Enabled = btnStop.Enabled = btnExport.Enabled = false;
 
             bar = new ProgressBar { Location = new Point(10, 294), Size = new Size(740, 20), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right, Maximum = 1000 };
@@ -356,6 +357,12 @@ namespace PlaylistDownloader
         {
             bool single = rbMonth.Checked;
             bool month = !rbRange.Checked;
+            // With the day left at 29-31 the month spinner crashes on shorter months, so month modes keep day 1
+            if (month)
+            {
+                dtFrom.Value = new DateTime(dtFrom.Value.Year, dtFrom.Value.Month, 1);
+                dtTo.Value = new DateTime(dtTo.Value.Year, dtTo.Value.Month, 1);
+            }
             dtFrom.Format = dtTo.Format = DateTimePickerFormat.Custom;
             dtFrom.CustomFormat = dtTo.CustomFormat = month ? "MM/yyyy" : "dd/MM/yyyy";
             dtFrom.ShowUpDown = dtTo.ShowUpDown = month;
@@ -466,8 +473,7 @@ namespace PlaylistDownloader
                     throw new InvalidOperationException("Intervallo ID album non valido: " + loId + " - " + hiId);
 
                 Log(string.Format("Scansione ID album da {0} a {1} ({2:N0} ID)", loId, hiId, hiId - loId));
-                string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PlaylistDownloader", "releasesearch");
-                Directory.CreateDirectory(dir);
+                string dir = GetOutputDir();
                 currentFile = Path.Combine(dir, string.Format("release_{0:yyyyMMdd}_{1:yyyyMMdd}_{2:yyyyMMdd_HHmmss}.csv", from, to, DateTime.Now));
                 Log("File di lavoro (salvataggio continuo): " + currentFile);
 
@@ -519,6 +525,32 @@ namespace PlaylistDownloader
                     RefreshStats();
                 }
             }
+        }
+
+        // "Ricerche" next to the exe; falls back to LocalAppData when that folder is not writable
+        private static string GetOutputDir()
+        {
+            try
+            {
+                string dir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Ricerche");
+                Directory.CreateDirectory(dir);
+                string probe = Path.Combine(dir, ".write_test");
+                File.WriteAllText(probe, "");
+                File.Delete(probe);
+                return dir;
+            }
+            catch (Exception)
+            {
+                string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PlaylistDownloader", "Ricerche");
+                Directory.CreateDirectory(dir);
+                return dir;
+            }
+        }
+
+        private void btnOpenFolder_Click(object sender, EventArgs e)
+        {
+            string dir = currentFile != null ? Path.GetDirectoryName(currentFile) : GetOutputDir();
+            Process.Start("explorer.exe", dir);
         }
 
         private void CloseWriter()
